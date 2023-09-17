@@ -57,9 +57,9 @@ int main(int argc, char* argv[]) {
     outFile = (char*)malloc((len1 + len2 + 1) * sizeof(char));
     strcpy(outFile, prefix);
     strcpy(outFile + 8, inFile);
+
 #ifdef MYDEBUGS
-    std::cout << "Input file: " << inFile << "\nOutput file: " << outFile
-              << "\n";
+    std::cout << "Input file: " << inFile << "\nOutput file: " << outFile << "\n";
 #endif
   } else {
     std::cerr << "Usage: " << argv[0] << " imagefile\n";
@@ -67,36 +67,22 @@ int main(int argc, char* argv[]) {
   }
 
   auto inImage = util::read_image(inFile, halo);
+  auto outImage = util::allocate_image(inImage.width(), inImage.height(), inImage.channels());
+  auto filter = util::generate_filter(util::filter_type::blur, filterWidth, inImage.channels());
 
-  auto outImage = util::allocate_image(inImage.width(), inImage.height(),
-                                       inImage.channels());
-
-  // The image convolution support code provides a
-  // `filter_type` enum which allows us to choose between
-  // `identity` and `blur`. The utility for generating the
-  // filter data; `generate_filter` takes a `filter_type`
-  // and a width.
-
-  auto filter = util::generate_filter(util::filter_type::blur, filterWidth,
-                                      inImage.channels());
-
-
-  //
-  // This code tries to grab up to 100 (MAXDEVICES) GPUs.
-  // If there are no GPUs, it will get a default device.
-  //
-#define MAXDEVICES 100
-
-  sycl::queue myQueues[MAXDEVICES];
+  // Check for available GPUs and create queues
+  const int MAX_DEVICES = 4;  // Maximum number of GPUs to use
+  sycl::queue myQueues[MAX_DEVICES];
   int howmany_devices = 0;
+  
   try {
     auto P = sycl::platform(sycl::gpu_selector_v);
     auto RootDevices = P.get_devices();
-    // auto C = sycl::context(RootDevices);
+    
     for (auto &D : RootDevices) {
-      myQueues[howmany_devices++] = sycl::queue(D,sycl::property::queue::enable_profiling{});
-      if (howmany_devices >= MAXDEVICES)
-	break;
+      myQueues[howmany_devices++] = sycl::queue(D, sycl::property::queue::enable_profiling{});
+      if (howmany_devices >= MAX_DEVICES)
+        break;
     }
   } 
   catch (sycl::exception e) {
@@ -334,3 +320,4 @@ catch (sycl::exception e) {
 
 util::write_image(outImage, outFile);
 }
+

@@ -154,6 +154,23 @@ int main(int argc, char* argv[]) {
       });
     });
 #endif
+
+    // Create a buffer for synchronization
+    sycl::buffer<int, 1> syncBuffer(sycl::range{1});
+
+    // Submit trivial kernels to all device queues
+    for (int i = 0; i < howmany_devices; ++i) {
+      myQueues[i].submit([&](sycl::handler& cgh) {
+        auto syncAccessor = syncBuffer.get_access<sycl::access::mode::write>(cgh);
+        cgh.single_task([=]() { syncAccessor[0] = 1; });
+      });
+    }
+
+    // Wait for all devices to complete synchronization
+    for (int i = 0; i < howmany_devices; ++i) {
+      myQueues[i].wait();
+    }
+
     auto inImgWidth = inImage.width();
     auto inImgHeight = inImage.height();
     auto channels = inImage.channels();

@@ -57,9 +57,9 @@ int main(int argc, char* argv[]) {
     outFile = (char*)malloc((len1 + len2 + 1) * sizeof(char));
     strcpy(outFile, prefix);
     strcpy(outFile + 8, inFile);
-
 #ifdef MYDEBUGS
-    std::cout << "Input file: " << inFile << "\nOutput file: " << outFile << "\n";
+    std::cout << "Input file: " << inFile << "\nOutput file: " << outFile
+              << "\n";
 #endif
   } else {
     std::cerr << "Usage: " << argv[0] << " imagefile\n";
@@ -67,22 +67,36 @@ int main(int argc, char* argv[]) {
   }
 
   auto inImage = util::read_image(inFile, halo);
-  auto outImage = util::allocate_image(inImage.width(), inImage.height(), inImage.channels());
-  auto filter = util::generate_filter(util::filter_type::blur, filterWidth, inImage.channels());
 
-  // Check for available GPUs and create queues
-  const int MAX_DEVICES = 4;  // Maximum number of GPUs to use
-  sycl::queue myQueues[MAX_DEVICES];
+  auto outImage = util::allocate_image(inImage.width(), inImage.height(),
+                                       inImage.channels());
+
+  // The image convolution support code provides a
+  // `filter_type` enum which allows us to choose between
+  // `identity` and `blur`. The utility for generating the
+  // filter data; `generate_filter` takes a `filter_type`
+  // and a width.
+
+  auto filter = util::generate_filter(util::filter_type::blur, filterWidth,
+                                      inImage.channels());
+
+
+  //
+  // This code tries to grab up to 100 (MAXDEVICES) GPUs.
+  // If there are no GPUs, it will get a default device.
+  //
+#define MAXDEVICES 100
+
+  sycl::queue myQueues[MAXDEVICES];
   int howmany_devices = 0;
-  
   try {
     auto P = sycl::platform(sycl::gpu_selector_v);
     auto RootDevices = P.get_devices();
-    
+    // auto C = sycl::context(RootDevices);
     for (auto &D : RootDevices) {
-      myQueues[howmany_devices++] = sycl::queue(D, sycl::property::queue::enable_profiling{});
-      if (howmany_devices >= MAX_DEVICES)
-        break;
+      myQueues[howmany_devices++] = sycl::queue(D,sycl::property::queue::enable_profiling{});
+      if (howmany_devices >= MAXDEVICES)
+	break;
     }
   } 
   catch (sycl::exception e) {
@@ -198,6 +212,9 @@ int main(int argc, char* argv[]) {
   auto filterWidth = filter.width();
   auto halo = filter.half_width();
 
+  auto inImgHeightHalf = inImgWidth / 2;
+  auto inImgHeightRem = inImgHeight - inImgHeightHalf;
+
   auto globalRange = sycl::range(inImgWidth, inImgHeight);
   auto localRange = sycl::range(1, 32);
   auto ndRange = sycl::nd_range(globalRange, localRange);
@@ -207,6 +224,17 @@ int main(int argc, char* argv[]) {
       sycl::range(1, channels);
   auto outBufRange =
       sycl::range(inImgHeight, inImgWidth) * sycl::range(1, channels);
+  auto inBufRangeHalf = sycl::range(inImgHeightHalf + (halo * 2), inImgWidth + (halo * 2)) *
+      sycl::range(1, channels);
+  auto outBufRangeHalf = sycl::range(inImgHeightHalf, inImgWidth) * sycl::range(1, channels);
+  auto inBufRangeRem = sycl::range(inImgHeightRem + (halo * 2), inImgWidth + (halo * 2)) *
+      sycl::range(1, channels);
+  auto outBufRangeRem = sycl::range(inImgHeightRem, inImgWidth) * sycl::range(1, channels);
+
+
+  std::cout << "Buffer range x: " << inBufRange[0] << " y: " << inBufRange[1] << std::endl;
+  std::cout << "Buffer range 1st half x: " << inBufRangeHalf[0] << " y: " << inBufRangeHalf[1] << std::endl;
+  std::cout << "Buffer range 2nd half x: " << inBufRangeRem[0] << " y: " << inBufRangeRem[1] << std::endl;
 
   auto filterRange = filterWidth * sycl::range(1, channels);
 
@@ -230,8 +258,13 @@ int main(int argc, char* argv[]) {
     outBuf.set_final_data(outImage.data());
 
     sycl::event e1 = myQueue1.submit([&](sycl::handler& cgh1) {
-      sycl::accessor inAccessor{inBuf, cgh1, sycl::read_only};
-      sycl::accessor outAccessor{outBuf, cgh1, sycl::write_only};
+      // sycl::accessor inAccessor{inBuf, cgh1, sycl::read_only};
+      // sycl::accessor outAccessor{outBuf, cgh1, sycl::write_only};
+      auto inAccessor = inBuf.get_access<sycl::access::mode::read>(
+        cgh1, sycl::range(522, 1044));
+      auto outAccessor = outBuf.get_access<sycl::access::mode::write>(
+        cgh1, sycl::range(512, 1024)
+      );
       sycl::accessor filterAccessor{filterBuf, cgh1, sycl::read_only};
 
       cgh1.parallel_for(ndRange, [=](sycl::nd_item<2> item) {
@@ -257,7 +290,7 @@ int main(int argc, char* argv[]) {
                 sycl::id(src[0] + (r - halo), src[1] + ((c - halo) * channels));
             auto filterOffset = sycl::id(r, c * channels);
 
-            for (int i = 0; i < channels; ++i) {
+            for (int i = 0; i < channels - 1; ++i) {
               auto channelOffset = sycl::id(0, i);
               sum[i] += inAccessor[srcOffset + channelOffset] *
                         filterAccessor[filterOffset + channelOffset];
@@ -265,13 +298,66 @@ int main(int argc, char* argv[]) {
           }
         }
 
+        for (size_t i = 0; i < channels - 1; ++i) {
+          outAccessor[dest + sycl::id{0, i}] = sum[i];
+        }
+      });
+    });
+
+    sycl::event e3 = myQueue2.submit([&](sycl::handler& cgh3) {
+      // sycl::accessor inAccessor{inBuf, cgh1, sycl::read_only};
+      // sycl::accessor outAccessor{outBuf, cgh1, sycl::write_only};
+      auto inAccessor = inBuf.get_access<sycl::access::mode::read>(
+        cgh3, sycl::range(522, 522), sycl::id(0, 1044)
+      );
+      auto outAccessor = outBuf.get_access<sycl::access::mode::write>(
+        cgh3, sycl::range(512, 512), sycl::id(0, 1024)
+      );
+      sycl::accessor filterAccessor{filterBuf, cgh3, sycl::read_only};
+
+      cgh3.parallel_for(ndRange, [=](sycl::nd_item<2> item) {
+        auto globalId = item.get_global_id();
+        globalId = sycl::id{globalId[1], globalId[0]};
+
+        auto channelsStride = sycl::range(1, channels);
+        auto haloOffset = sycl::id(halo, halo);
+        auto src = (globalId + haloOffset) * channelsStride;
+        auto dest = globalId * channelsStride;
+
+        // 100 is a hack - so the dim is not dynamic
+        float sum[/* channels */ 100];
+        assert(channels < 100);
+
         for (size_t i = 0; i < channels; ++i) {
+          sum[i] = 0.0f;
+        }
+
+        for (int r = 0; r < filterWidth; ++r) {
+          for (int c = 0; c < filterWidth; ++c) {
+            auto srcOffset =
+                sycl::id(src[0] + (r - halo), src[1] + ((c - halo) * channels));
+            auto filterOffset = sycl::id(r, c * channels);
+
+            // Out of bound write here? Only should write to 3rd channel.
+            // for (int i = 0; i < channels; ++i) {
+            auto channelOffset = sycl::id(0, channels - 1);
+            sum[channels - 1] += inAccessor[srcOffset + channelOffset] *
+                      filterAccessor[filterOffset + channelOffset];
+            // }
+          }
+        }
+
+        for (size_t i = 0; i < channels; ++i) {
+          if (i != channels - 1) {
+            continue;
+          }
           outAccessor[dest + sycl::id{0, i}] = sum[i];
         }
       });
     });
 
     myQueue1.wait_and_throw();
+    myQueue2.wait_and_throw();
 
 #ifdef MYDEBUGS
     // Timing code is from our book (2nd edition) -
@@ -320,4 +406,3 @@ catch (sycl::exception e) {
 
 util::write_image(outImage, outFile);
 }
-

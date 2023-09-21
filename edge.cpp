@@ -158,7 +158,7 @@ int main(int argc, char* argv[]) {
     // Create a buffer for synchronization
     sycl::buffer<int, 1> syncBuffer(sycl::range{1});
 
-    // Submit trivial kernels to all device queues
+    // Submit trivial kernels to all device queues for initialization
     for (int i = 0; i < howmany_devices; ++i) {
       myQueues[i].submit([&](sycl::handler& cgh) {
         auto syncAccessor = syncBuffer.get_access<sycl::access::mode::write>(cgh);
@@ -278,9 +278,74 @@ int main(int argc, char* argv[]) {
       std::cout << "profiling: Operation completed on device2 in " << time2A
                 << " nanoseconds (" << time2A / 1.0e9 << " seconds)\n";
 #endif
+
+      // Split the image processing between Queue1 and Queue2
+      auto globalRange2 = sycl::range(inImgWidth, inImgHeight / 2); // Second half of the image
+      auto inBufRange2 = sycl::range(inImgHeight / 2 + (halo * 2), inImgWidth + (halo * 2)) * sycl::range(1, channels);
+      auto outBufRange2 = sycl::range(inImgHeight / 2, inImgWidth) * sycl::range(1, channels);
+
+      auto inBuf2 = sycl::buffer{inImage.data() + (inImgHeight / 2 * inImgWidth * channels * sizeof(float)), inBufRange2};
+      auto outBuf2 = sycl::buffer<float, 2>{outBufRange2};
+
+      outBuf2.set_final_data(outImage.data() + (inImgHeight / 2 * inImgWidth * channels * sizeof(float)));
+
+      sycl::event e3 = myQueue1.submit([&](sycl::handler& cgh1) {
+        sycl::accessor inAccessor{inBuf2, cgh1, sycl::read_only};
+        sycl::accessor outAccessor{outBuf2, cgh1, sycl::write_only};
+        sycl::accessor filterAccessor{filterBuf, cgh1, sycl::read_only};
+
+        cgh1.parallel_for(ndRange, [=](sycl::nd_item<2> item) {
+          auto globalId = item.get_global_id();
+          globalId = sycl::id{globalId[1], globalId[0]};
+
+          auto channelsStride = sycl::range(1, channels);
+          auto haloOffset = sycl::id(halo, halo);
+          auto src = (globalId + haloOffset) * channelsStride;
+          auto dest = globalId * channelsStride;
+
+          float sum[100];
+          assert(channels < 100);
+
+          for (size_t i = 0; i < channels; ++i) {
+            sum[i] = 0.0f;
+          }
+
+          for (int r = 0; r < filterWidth; ++r) {
+            for (int c = 0; c < filterWidth; ++c) {
+              auto srcOffset =
+                  sycl::id(src[0] + (r - halo), src[1] + ((c - halo) * channels));
+              auto filterOffset = sycl::id(r, c * channels);
+
+              for (int i = 0; i < channels; ++i) {
+                auto channelOffset = sycl::id(0, i);
+                sum[i] += inAccessor[srcOffset + channelOffset] *
+                          filterAccessor[filterOffset + channelOffset];
+              }
+            }
+          }
+
+          for (size_t i = 0; i < channels; ++i) {
+            outAccessor[dest + sycl::id{0, i}] = sum[i];
+          }
+        });
+      });
+
+      // Synchronize Queue1
+      myQueue1.wait_and_throw();
+
+#ifdef MYDEBUGS
+      double time3A = (e3.template get_profiling_info<
+                           sycl::info::event_profiling::command_end>() -
+                       e3.template get_profiling_info<
+                           sycl::info::event_profiling::command_start>());
+
+      std::cout << "profiling: Operation completed on device1 (second half) in " << time3A
+                << " nanoseconds (" << time3A / 1.0e9 << " seconds)\n";
+#endif
     }
   } catch (sycl::exception e) {
     std::cout << "Exception caught: " << e.what() << std::endl;
   }
+
   util::write_image(outImage, outFile);
 }

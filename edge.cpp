@@ -266,9 +266,9 @@ int main(int argc, char* argv[]) {
         float sum[/* channels */ 100];
         assert(channels < 100);
 
-        // for (size_t i = 0; i < channels; ++i) {
-        //   sum[i] = 0.0f;
-        // }
+        for (size_t i = 0; i < channels; ++i) {
+          sum[i] = 0.0f;
+        }
         sum[0] = 0.0f;
 
         for (int r = 0; r < filterWidth; ++r) {
@@ -277,7 +277,7 @@ int main(int argc, char* argv[]) {
                 sycl::id(src[0] + (r - halo), src[1] + ((c - halo) * channels));
             auto filterOffset = sycl::id(r, c * channels);
 
-            for (int i = 0; i < channels - 1; ++i) {
+            for (int i = 0; i < channels; ++i) {
               auto channelOffset = sycl::id(0, i);
               sum[i] += inAccessor[srcOffset + channelOffset] *
                         filterAccessor[filterOffset + channelOffset];
@@ -285,13 +285,16 @@ int main(int argc, char* argv[]) {
           }
         }
 
-        outAccessor[dest + sycl::id{0, 0}] = sum[0];
+        // outAccessor[dest + sycl::id{0, 0}] = sum[0];
 
-        // for (size_t i = 0; i < channels - 1; ++i) {
-        //   outAccessor[dest + sycl::id{0, i}] = sum[i];
-        // }
+        for (size_t i = 0; i < channels; ++i) {
+          outAccessor[dest + sycl::id{0, i}] = sum[i];
+        }
       });
     });
+
+
+
 
     sycl::event e3 = myQueue2.submit([&](sycl::handler& cgh3) {
       // sycl::accessor inAccessor{inBuf, cgh1, sycl::read_only};

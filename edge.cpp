@@ -1,31 +1,4 @@
-/*
 
-Licensed under a Creative Commons Attribution-ShareAlike 4.0
-International License.
-
-Code by James Reinders, for class at Cornell in September
-2023. Based on Exercise 15 of SYCL Academy Code Exercises.
-
-*/
-
-/*******************************************************************
-
-Check https://tinyurl.com/reinders-4class for lots of
-information, only some of it is useful for this class.  :)
-
-
-
-
-Known issues:
-
-Crude addition of "blurred_" to front of file name won't
-work if there is a directory in the path, so such runs are
-rejected.
-
-If the image is too large - the runtime may segment fault -
-this code doesn't check for limits (bad, bad, bad!)
-
-********************************************************************/
 
 #define MYDEBUGS
 #define DOUBLETROUBLE
@@ -71,20 +44,8 @@ int main(int argc, char* argv[]) {
   auto outImage = util::allocate_image(inImage.width(), inImage.height(),
                                        inImage.channels());
 
-  // The image convolution support code provides a
-  // `filter_type` enum which allows us to choose between
-  // `identity` and `blur`. The utility for generating the
-  // filter data; `generate_filter` takes a `filter_type`
-  // and a width.
-
   auto filter = util::generate_filter(util::filter_type::blur, filterWidth,
                                       inImage.channels());
-
-
-  //
-  // This code tries to grab up to 100 (MAXDEVICES) GPUs.
-  // If there are no GPUs, it will get a default device.
-  //
 #define MAXDEVICES 100
 
   sycl::queue myQueues[MAXDEVICES];
@@ -164,12 +125,7 @@ int main(int argc, char* argv[]) {
 
 #ifdef DOUBLETROUBLE
     std::array<int, 200> d4;
-    // inspired and based upon:
-    // https://cs.uwaterloo.ca/~alopez-o/math-faq/mathtext/node12.html
-    // and
-    // https://crypto.stanford.edu/pbc/notes/pi/code.html
-    // (retrieved September 13, 2023)
-    //
+
     sycl::buffer outD4(d4);
     sycl::event e2 = myQueue2.submit([&](sycl::handler& cgh2) {
       auto outAccessor = outD4.get_access<sycl::access::mode::write>(cgh2);
@@ -244,12 +200,6 @@ int main(int argc, char* argv[]) {
             << "\nhalo: " << halo << "\n";
 #endif
 
-  // Always good to limit scope of accessors,
-  // so a good SYCL program will introduce a scope before
-  // defining buffers.
-  // Remember: While a buffer exists, the data it points
-  // to should ONLY be accessed with an accessor. That
-  // goes for the host just as much as the device.
 
   {
     auto inBuf = sycl::buffer{inImage.data(), inBufRange};
@@ -261,9 +211,11 @@ int main(int argc, char* argv[]) {
       // sycl::accessor inAccessor{inBuf, cgh1, sycl::read_only};
       // sycl::accessor outAccessor{outBuf, cgh1, sycl::write_only};
       auto inAccessor = inBuf.get_access<sycl::access::mode::read>(
-        cgh1, sycl::range(522, 522));
+        // cgh1, sycl::range(522, 522));
+           cgh1, sycl::range(1566, 1566));
       auto outAccessor = outBuf.get_access<sycl::access::mode::write>(
-        cgh1, sycl::range(512, 512)
+        // cgh1, sycl::range(512, 512)
+           cgh1, sycl::range(1536, 1536)
       );
       sycl::accessor filterAccessor{filterBuf, cgh1, sycl::read_only};
 
@@ -300,10 +252,6 @@ int main(int argc, char* argv[]) {
         }
 
         outAccessor[dest + sycl::id{0, 0}] = sum[0];
-
-        // for (size_t i = 0; i < channels - 1; ++i) {
-        //   outAccessor[dest + sycl::id{0, i}] = sum[i];
-        // }
       });
     });
 
@@ -313,6 +261,7 @@ int main(int argc, char* argv[]) {
       // Allow full access but only write to the 3rd channel?
       auto inAccessor = inBuf.get_access<sycl::access::mode::read>(
         cgh3, sycl::range(0, 1566)
+         gh3, sycl::range(0, 1566)
         // sycl::id(0, 1044)
       );
       auto outAccessor = outBuf.get_access<sycl::access::mode::write>(
@@ -355,24 +304,12 @@ int main(int argc, char* argv[]) {
 
         outAccessor[dest + sycl::id{0, 1}] = sum[1];
         outAccessor[dest + sycl::id{0, 2}] = sum[2];
-        // for (size_t i = 0; i < channels; ++i) {
-        //   if (i != channels - 1) {
-        //     continue;
-        //   }
-        //   outAccessor[dest + sycl::id{0, 2}] = sum[2];
-        // }
+
       });
     });
 
     myQueue1.wait_and_throw();
-
 #ifdef MYDEBUGS
-    // Timing code is from our book (2nd edition) -
-    // read section on profiling in
-    // Chapter 13 that includes figures 13-6 through 13-8.
-    // Check https://tinyurl.com/reinders-4class for link
-    // to copy of 2nd edition ("Learn SYCL").
-
     double time1A = (e1.template get_profiling_info<
                          sycl::info::event_profiling::command_end>() -
                      e1.template get_profiling_info<
@@ -381,7 +318,6 @@ int main(int argc, char* argv[]) {
     double time1B =
         (std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1)
              .count());
-
     std::cout << "profiling: Operation completed on device1 in " << time1A
               << " nanoseconds (" << time1A / 1.0e9 << " seconds)\n";
     std::cout << "chrono: Operationd completed on device1 in " << time1B * 1000
@@ -389,9 +325,7 @@ int main(int argc, char* argv[]) {
     std::cout << "chrono more than profiling by " << (time1B * 1000 - time1A)
               << " nanoseconds (" << (time1B * 1000 - time1A) / 1.0e9
               << " seconds)\n";
-
 myQueue2.wait_and_throw();
-
 #ifdef DOUBLETROUBLE
     e2.wait(); // make sure all digits are done being computed
     sycl::host_accessor myD4(outD4); // the scope of the buffer continues - so we must not use d4[] directly

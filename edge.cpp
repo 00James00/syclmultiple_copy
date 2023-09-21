@@ -212,10 +212,10 @@ int main(int argc, char* argv[]) {
       // sycl::accessor outAccessor{outBuf, cgh1, sycl::write_only};
       auto inAccessor = inBuf.get_access<sycl::access::mode::read>(
         // cgh1, sycl::range(522, 522));
-           cgh1, sycl::range(1566, 1566));
+        cgh1, sycl::range(1566, 1566));
       auto outAccessor = outBuf.get_access<sycl::access::mode::write>(
         // cgh1, sycl::range(512, 512)
-           cgh1, sycl::range(1536, 1536)
+        cgh1, sycl::range(1536, 1536)
       );
       sycl::accessor filterAccessor{filterBuf, cgh1, sycl::read_only};
 

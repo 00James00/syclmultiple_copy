@@ -279,7 +279,7 @@ int main(int argc, char* argv[]) {
 
             // for (int i = 0; i < channels; ++i) {
               auto channelOffset = sycl::id(0, 0);
-              sum[i] += inAccessor[srcOffset + channelOffset] *
+              sum[0] += inAccessor[srcOffset + channelOffset] *
                         filterAccessor[filterOffset + channelOffset];
             // }
           }

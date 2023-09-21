@@ -1,31 +1,3 @@
-/*
-
-Licensed under a Creative Commons Attribution-ShareAlike 4.0
-International License.
-
-Code by James Reinders, for class at Cornell in September
-2023. Based on Exercise 15 of SYCL Academy Code Exercises.
-
-*/
-
-/*******************************************************************
-
-Check https://tinyurl.com/reinders-4class for lots of
-information, only some of it is useful for this class.  :)
-
-
-
-
-Known issues:
-
-Crude addition of "blurred_" to front of file name won't
-work if there is a directory in the path, so such runs are
-rejected.
-
-If the image is too large - the runtime may segment fault -
-this code doesn't check for limits (bad, bad, bad!)
-
-********************************************************************/
 
 #define MYDEBUGS
 #define DOUBLETROUBLE
@@ -326,11 +298,11 @@ int main(int argc, char* argv[]) {
       // sycl::accessor outAccessor{outBuf, cgh1, sycl::write_only};
       // Allow full access but only write to the 3rd channel?
       auto inAccessor = inBuf.get_access<sycl::access::mode::read>(
-        cgh3, sycl::range(0, 1566)
+        cgh3, sycl::range(522, 1566)
         // sycl::id(0, 1044)
       );
       auto outAccessor = outBuf.get_access<sycl::access::mode::write>(
-        cgh3, sycl::range(0, 1536)
+        cgh3, sycl::range(512, 1536)
         // sycl::id(0, 1024)
       );
       sycl::accessor filterAccessor{filterBuf, cgh3, sycl::read_only};

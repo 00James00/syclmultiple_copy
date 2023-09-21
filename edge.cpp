@@ -257,55 +257,47 @@ int main(int argc, char* argv[]) {
     auto filterBuf = sycl::buffer{filter.data(), filterRange};
     outBuf.set_final_data(outImage.data());
 
-    sycl::event e1 = myQueue1.submit([&](sycl::handler& cgh1) {
-      // sycl::accessor inAccessor{inBuf, cgh1, sycl::read_only};
-      // sycl::accessor outAccessor{outBuf, cgh1, sycl::write_only};
-      auto inAccessor = inBuf.get_access<sycl::access::mode::read>(
-        cgh1, sycl::range(1566, 1566));
-      auto outAccessor = outBuf.get_access<sycl::access::mode::write>(
-        cgh1, sycl::range(1536, 1536)
-      );
-      sycl::accessor filterAccessor{filterBuf, cgh1, sycl::read_only};
+     	cgh1.parallel_for(ndRange, [=](sycl::nd_item<2> item) {
+    	auto globalId = item.get_global_id();
+    	globalId = sycl::id{globalId[1], globalId[0]};
 
-      cgh1.parallel_for(ndRange, [=](sycl::nd_item<2> item) {
-        auto globalId = item.get_global_id();
-        globalId = sycl::id{globalId[1], globalId[0]};
+    	auto channelsStride = sycl::range(1, channels);
+    	auto haloOffset = sycl::id(halo, halo);
+    	auto src = (globalId + haloOffset) * channelsStride;
+    	auto dest = globalId * channelsStride;
 
-        auto channelsStride = sycl::range(1, channels);
-        auto haloOffset = sycl::id(halo, halo);
-        auto src = (globalId + haloOffset) * channelsStride;
-        auto dest = globalId * channelsStride;
+    	// 100 is a hack - so the dim is not dynamic
+    	float sum[/* channels */ 100];
+    	assert(channels < 100);
 
-        // 100 is a hack - so the dim is not dynamic
-        float sum[/* channels */ 100];
-        assert(channels < 100);
+    	for (size_t i = 0; i < channels; ++i) {
+      	sum[i] = 0.0f;
+    	}
+    	sum[0] = 0.0f;
 
-        // for (size_t i = 0; i < channels; ++i) {
-        //   sum[i] = 0.0f;
-        // }
-        sum[0] = 0.0f;
+    	for (int r = 0; r < filterWidth; ++r) {
+      	for (int c = 0; c < filterWidth; ++c) {
+        	auto srcOffset =
+            	sycl::id(src[0] + (r - halo), src[1] + ((c - halo) * channels));
+        	auto filterOffset = sycl::id(r, c * channels);
 
-        for (int r = 0; r < filterWidth; ++r) {
-          for (int c = 0; c < filterWidth; ++c) {
-            auto srcOffset =
-                sycl::id(src[0] + (r - halo), src[1] + ((c - halo) * channels));
-            auto filterOffset = sycl::id(r, c * channels);
+        	for (int i = 0; i < channels; ++i) {
+          	auto channelOffset = sycl::id(0, i);
+          	sum[i] += inAccessor[srcOffset + channelOffset] *
+                    	filterAccessor[filterOffset + channelOffset];
+        	}
+      	}
+    	}
 
-            for (int i = 0; i < channels - 1; ++i) {
-              auto channelOffset = sycl::id(0, i);
-              sum[i] += inAccessor[srcOffset + channelOffset] *
-                        filterAccessor[filterOffset + channelOffset];
-            }
-          }
-        }
+    	// outAccessor[dest + sycl::id{0, 0}] = sum[0];
 
-        outAccessor[dest + sycl::id{0, 0}] = sum[0];
+    	for (size_t i = 0; i < channels; ++i) {
+      	outAccessor[dest + sycl::id{0, i}] = sum[i];
+    	}
+  	});
+	});
 
-        // for (size_t i = 0; i < channels - 1; ++i) {
-        //   outAccessor[dest + sycl::id{0, i}] = sum[i];
-        // }
-      });
-    });
+
 
     sycl::event e3 = myQueue2.submit([&](sycl::handler& cgh3) {
       // sycl::accessor inAccessor{inBuf, cgh1, sycl::read_only};

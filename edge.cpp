@@ -158,9 +158,6 @@ int main(int argc, char* argv[]) {
     std::cout << "\n";
 #endif
 
-#ifdef MYDEBUGS
-    auto t1 = std::chrono::steady_clock::now();  // Start timing
-#endif
 
 #ifdef DOUBLETROUBLE
     std::array<int, 200> d4;
@@ -257,47 +254,72 @@ int main(int argc, char* argv[]) {
     auto filterBuf = sycl::buffer{filter.data(), filterRange};
     outBuf.set_final_data(outImage.data());
 
-     	cgh1.parallel_for(ndRange, [=](sycl::nd_item<2> item) {
-    	auto globalId = item.get_global_id();
-    	globalId = sycl::id{globalId[1], globalId[0]};
+      // Insert a trivial kernel just before starting the timer
+    sycl::event trivialEvent = myQueues[0].submit([&](sycl::handler& cgh) {
+      cgh.single_task<class TrivialTask>([=]() {
+        // This is another trivial task, you can put any code here
+        for (int j = 0; j < 1000000; ++j) {
+          // Do some simple computation
+          double temp = j * 2.71828;
+        }
+      });
+    });
 
-    	auto channelsStride = sycl::range(1, channels);
-    	auto haloOffset = sycl::id(halo, halo);
-    	auto src = (globalId + haloOffset) * channelsStride;
-    	auto dest = globalId * channelsStride;
-
-    	// 100 is a hack - so the dim is not dynamic
-    	float sum[/* channels */ 100];
-    	assert(channels < 100);
-
-    	for (size_t i = 0; i < channels; ++i) {
-      	sum[i] = 0.0f;
-    	}
-    	sum[0] = 0.0f;
-
-    	for (int r = 0; r < filterWidth; ++r) {
-      	for (int c = 0; c < filterWidth; ++c) {
-        	auto srcOffset =
-            	sycl::id(src[0] + (r - halo), src[1] + ((c - halo) * channels));
-        	auto filterOffset = sycl::id(r, c * channels);
-
-        	for (int i = 0; i < channels; ++i) {
-          	auto channelOffset = sycl::id(0, i);
-          	sum[i] += inAccessor[srcOffset + channelOffset] *
-                    	filterAccessor[filterOffset + channelOffset];
-        	}
-      	}
-    	}
-
-    	// outAccessor[dest + sycl::id{0, 0}] = sum[0];
-
-    	for (size_t i = 0; i < channels; ++i) {
-      	outAccessor[dest + sycl::id{0, i}] = sum[i];
-    	}
-  	});
-	});
+    trivialEvent.wait(); // Wait for the trivial task to complete
+    #ifdef MYDEBUGS
+    auto t1 = std::chrono::steady_clock::now();  // Start timing
+    #endif
 
 
+    sycl::event e1 = myQueue1.submit([&](sycl::handler& cgh1) {
+      // sycl::accessor inAccessor{inBuf, cgh1, sycl::read_only};
+      // sycl::accessor outAccessor{outBuf, cgh1, sycl::write_only};
+      auto inAccessor = inBuf.get_access<sycl::access::mode::read>(
+        cgh1, sycl::range(522, 522));
+      auto outAccessor = outBuf.get_access<sycl::access::mode::write>(
+        cgh1, sycl::range(512, 512)
+      );
+      sycl::accessor filterAccessor{filterBuf, cgh1, sycl::read_only};
+
+      cgh1.parallel_for(ndRange, [=](sycl::nd_item<2> item) {
+        auto globalId = item.get_global_id();
+        globalId = sycl::id{globalId[1], globalId[0]};
+
+        auto channelsStride = sycl::range(1, channels);
+        auto haloOffset = sycl::id(halo, halo);
+        auto src = (globalId + haloOffset) * channelsStride;
+        auto dest = globalId * channelsStride;
+
+        // 100 is a hack - so the dim is not dynamic
+        float sum[/* channels */ 100];
+        assert(channels < 100);
+
+        // for (size_t i = 0; i < channels; ++i) {
+        //   sum[i] = 0.0f;
+        // }
+        sum[0] = 0.0f;
+
+        for (int r = 0; r < filterWidth; ++r) {
+          for (int c = 0; c < filterWidth; ++c) {
+            auto srcOffset =
+                sycl::id(src[0] + (r - halo), src[1] + ((c - halo) * channels));
+            auto filterOffset = sycl::id(r, c * channels);
+
+            for (int i = 0; i < channels - 1; ++i) {
+              auto channelOffset = sycl::id(0, i);
+              sum[i] += inAccessor[srcOffset + channelOffset] *
+                        filterAccessor[filterOffset + channelOffset];
+            }
+          }
+        }
+
+        outAccessor[dest + sycl::id{0, 0}] = sum[0];
+
+        // for (size_t i = 0; i < channels - 1; ++i) {
+        //   outAccessor[dest + sycl::id{0, i}] = sum[i];
+        // }
+      });
+    });
 
     sycl::event e3 = myQueue2.submit([&](sycl::handler& cgh3) {
       // sycl::accessor inAccessor{inBuf, cgh1, sycl::read_only};
@@ -357,6 +379,7 @@ int main(int argc, char* argv[]) {
     });
 
     myQueue1.wait_and_throw();
+    auto t2 = std::chrono::steady_clock::now();  // Stop timing
 
 #ifdef MYDEBUGS
     // Timing code is from our book (2nd edition) -
@@ -369,7 +392,7 @@ int main(int argc, char* argv[]) {
                          sycl::info::event_profiling::command_end>() -
                      e1.template get_profiling_info<
                          sycl::info::event_profiling::command_start>());
-    auto t2 = std::chrono::steady_clock::now();  // Stop timing
+    
     double time1B =
         (std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1)
              .count());

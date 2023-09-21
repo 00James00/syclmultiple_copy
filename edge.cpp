@@ -243,13 +243,13 @@ int main(int argc, char* argv[]) {
     #endif
 
 
-    sycl::event e1 = myQueue1.submit([&](sycl::handler& cgh1) {
+      sycl::event e1 = myQueue1.submit([&](sycl::handler& cgh1) {
       // sycl::accessor inAccessor{inBuf, cgh1, sycl::read_only};
       // sycl::accessor outAccessor{outBuf, cgh1, sycl::write_only};
       auto inAccessor = inBuf.get_access<sycl::access::mode::read>(
-        cgh1, sycl::range(522, 1566));
+        cgh1, sycl::range(522, 522));
       auto outAccessor = outBuf.get_access<sycl::access::mode::write>(
-        cgh1, sycl::range(512, 1536)
+        cgh1, sycl::range(512, 512)
       );
       sycl::accessor filterAccessor{filterBuf, cgh1, sycl::read_only};
 
@@ -266,9 +266,9 @@ int main(int argc, char* argv[]) {
         float sum[/* channels */ 100];
         assert(channels < 100);
 
-        for (size_t i = 0; i < channels; ++i) {
-          sum[i] = 0.0f;
-        }
+        // for (size_t i = 0; i < channels; ++i) {
+        //   sum[i] = 0.0f;
+        // }
         sum[0] = 0.0f;
 
         for (int r = 0; r < filterWidth; ++r) {
@@ -277,19 +277,19 @@ int main(int argc, char* argv[]) {
                 sycl::id(src[0] + (r - halo), src[1] + ((c - halo) * channels));
             auto filterOffset = sycl::id(r, c * channels);
 
-            for (int i = 0; i < channels; ++i) {
-              auto channelOffset = sycl::id(0, i);
+            // for (int i = 0; i < channels; ++i) {
+              auto channelOffset = sycl::id(0, 0);
               sum[i] += inAccessor[srcOffset + channelOffset] *
                         filterAccessor[filterOffset + channelOffset];
-            }
+            // }
           }
         }
 
-        // outAccessor[dest + sycl::id{0, 0}] = sum[0];
+        outAccessor[dest + sycl::id{0, 0}] = sum[0];
 
-        for (size_t i = 0; i < channels; ++i) {
-          outAccessor[dest + sycl::id{0, i}] = sum[i];
-        }
+        // for (size_t i = 0; i < channels; ++i) {
+        //   outAccessor[dest + sycl::id{0, i}] = sum[i];
+        // }
       });
     });
 
